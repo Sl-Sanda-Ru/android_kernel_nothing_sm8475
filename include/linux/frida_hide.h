@@ -8,6 +8,7 @@
 #include <linux/sched/mm.h>
 #include <linux/mm.h>
 #include <linux/fs.h>
+#include <linux/file.h>
 #include <linux/dcache.h>
 
 /* True when the *calling* task's executable is frida-server itself.
