@@ -1,0 +1,268 @@
+name: Build NP2 Kernel (KSUN + SUSFS)
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_branch:
+        description: 'Branch of this repo to build'
+        required: false
+        type: string
+        default: 'lineage-23.2'
+      kernel_defconfig:
+        description: 'Base defconfig (in arch/arm64/configs)'
+        required: false
+        type: string
+        default: 'gki_defconfig'
+      extra_configs:
+        description: 'Extra config fragments (relative to arch/arm64/configs), space-separated'
+        required: false
+        type: string
+        default: 'vendor/waipio_GKI.config vendor/nothing/waipio_GKI.config vendor/debugfs.config'
+      susfs_branch:
+        description: 'SUSFS branch (also selects patch name)'
+        required: false
+        type: string
+        default: 'gki-android13-5.10'
+      ksu_repo:
+        description: 'KernelSU-Next repo (pershoot fork ships SUSFS natively)'
+        required: false
+        type: string
+        default: 'https://github.com/pershoot/KernelSU-Next.git'
+      ksu_branch:
+        description: 'KernelSU-Next branch'
+        required: false
+        type: string
+        default: 'dev-susfs'
+      susfs_force:
+        description: 'Force SUSFS patch apply (ignore .rej failures)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      KERNEL_DIR: kernel
+      ANYKERNEL_DIR: AnyKernel3
+      CCACHE_DIR: /home/runner/.cache/ccache
+      ARCH: arm64
+      SUBARCH: arm64
+
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: false
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libelf-dev libssl-dev ccache \
+            lz4 zip python3 clang llvm lld gcc-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi wget git
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/ccache
+          key: ccache-ksun-susfs-${{ inputs.kernel_branch }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-ksun-susfs-${{ inputs.kernel_branch }}-
+            ccache-ksun-susfs-
+
+      - name: Setup ccache
+        run: |
+          mkdir -p "$HOME/.ccache-bin"
+          ln -sf /usr/bin/ccache "$HOME/.ccache-bin/clang"
+          ln -sf /usr/bin/ccache "$HOME/.ccache-bin/clang++"
+          echo "$HOME/.ccache-bin" >> "$GITHUB_PATH"
+          ccache --set-config=max_size=2G
+          ccache --set-config=compression=true
+          ccache --set-config=sloppiness=time_macros,file_stat_matches,include_file_ctime,include_file_mtime
+          ccache --set-config=base_dir="$GITHUB_WORKSPACE"
+          ccache --set-config=hash_dir=false
+          ccache --zero-stats
+
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.kernel_branch }}
+          path: ${{ env.KERNEL_DIR }}
+          fetch-depth: 1
+
+      - name: Clone AnyKernel3
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "$ANYKERNEL_DIR"
+          rm -rf "$ANYKERNEL_DIR/.git"
+
+      - name: Integrate KernelSU-Next
+        working-directory: ${{ env.KERNEL_DIR }}
+        env:
+          KSU_BRANCH: ${{ inputs.ksu_branch }}
+        run: |
+          curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/${KSU_BRANCH}/kernel/setup.sh" | bash -s "${KSU_BRANCH}"
+
+      - name: Apply SUSFS patches
+        working-directory: ${{ github.workspace }}
+        env:
+          SUSFS_BRANCH: ${{ inputs.susfs_branch }}
+          SUSFS_FORCE: ${{ inputs.susfs_force }}
+        run: |
+          set -e
+          git clone --depth=1 -b "${SUSFS_BRANCH}" \
+            https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
+
+          # Copy SUSFS sources into the kernel tree
+          cp susfs4ksu/kernel_patches/fs/* "${KERNEL_DIR}/fs/"
+          cp susfs4ksu/kernel_patches/include/linux/* "${KERNEL_DIR}/include/linux/"
+
+          PATCH="susfs4ksu/kernel_patches/50_add_susfs_in_${SUSFS_BRANCH}.patch"
+          if [ ! -f "$PATCH" ]; then
+            echo "SUSFS patch $PATCH not found" >&2
+            exit 1
+          fi
+
+          cd "${KERNEL_DIR}"
+          if [ "${SUSFS_FORCE}" = "true" ]; then
+            patch -p1 --forward --fuzz=3 < "../${PATCH}" || true
+          else
+            patch -p1 --forward --fuzz=3 < "../${PATCH}"
+          fi
+
+          # Enable required Kconfig options
+          {
+            echo "CONFIG_KSU=y"
+            echo "CONFIG_KSU_SUSFS=y"
+            echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
+            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
+            echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y"
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
+            echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
+            echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
+            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+          } >> arch/arm64/configs/${{ inputs.kernel_defconfig }}
+
+      - name: Enable swap space
+        run: |
+          sudo swapoff /mnt/np2-swap 2>/dev/null || true
+          sudo rm -f /mnt/np2-swap
+          if sudo fallocate -l 12G /mnt/np2-swap; then
+            sudo chmod 600 /mnt/np2-swap
+            sudo mkswap /mnt/np2-swap
+            sudo swapon /mnt/np2-swap || echo "Swap not permitted on this runner"
+          fi
+          free -h
+          df -h / /mnt
+
+      - name: Build kernel
+        working-directory: ${{ env.KERNEL_DIR }}
+        env:
+          DEFCONFIG: ${{ inputs.kernel_defconfig }}
+          EXTRA_FRAGS: ${{ inputs.extra_configs }}
+        run: |
+          set -e
+          MAKE_ARGS=(
+            ARCH=arm64
+            CROSS_COMPILE=aarch64-linux-gnu-
+            CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+            LLVM=1 LLVM_IAS=1
+            LD=ld.lld HOSTLD=ld.lld
+            CC=clang CXX=clang++
+            HOSTCC=clang HOSTCXX=clang++
+            O=out
+            -j"$(nproc)"
+          )
+
+          # Merge defconfig with fragments
+          FRAG_PATHS=()
+          for f in $EXTRA_FRAGS; do
+            FRAG_PATHS+=("arch/arm64/configs/${f}")
+          done
+
+          make "${MAKE_ARGS[@]}" "${DEFCONFIG}"
+          if [ ${#FRAG_PATHS[@]} -gt 0 ]; then
+            ./scripts/kconfig/merge_config.sh -m -O out out/.config "${FRAG_PATHS[@]}"
+            make "${MAKE_ARGS[@]}" olddefconfig
+          fi
+
+          make "${MAKE_ARGS[@]}" Image Image.gz dtbs || \
+          make "${MAKE_ARGS[@]}" Image Image.gz
+
+      - name: ccache stats
+        if: always()
+        run: ccache --show-stats --verbose || true
+
+      - name: Package with AnyKernel3
+        run: |
+          set -e
+          IMG="${KERNEL_DIR}/out/arch/arm64/boot/Image"
+          IMG_GZ="${KERNEL_DIR}/out/arch/arm64/boot/Image.gz"
+          if [ -f "$IMG_GZ" ]; then
+            cp "$IMG_GZ" "$ANYKERNEL_DIR/Image.gz"
+          fi
+          if [ -f "$IMG" ]; then
+            cp "$IMG" "$ANYKERNEL_DIR/Image"
+          fi
+
+          # Copy dtbo if present
+          DTBO="${KERNEL_DIR}/out/arch/arm64/boot/dtbo.img"
+          [ -f "$DTBO" ] && cp "$DTBO" "$ANYKERNEL_DIR/dtbo.img" || true
+
+          cd "$ANYKERNEL_DIR"
+          zip -r9 "../kernel-NP2-KSUN-SUSFS.zip" . -x "*.git*" "README.md"
+
+      - name: Upload kernel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-NP2-KSUN-SUSFS
+          path: kernel-NP2-KSUN-SUSFS.zip
+          retention-days: 30
+
+      - name: Upload .config for debugging
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: config-NP2-KSUN-SUSFS
+          path: kernel/out/.config
+          retention-days: 7
+
+      - name: Collect .rej files
+        if: always()
+        id: collect_rej
+        run: |
+          mkdir -p rej
+          found=false
+          while IFS= read -r -d '' f; do
+            found=true
+            mkdir -p "rej/$(dirname "$f")"
+            cp "$f" "rej/$f"
+            orig="${f%.rej}"
+            [ -f "$orig" ] && cp "$orig" "rej/$orig"
+          done < <(find . -path ./rej -prune -o -name '*.rej' -print0)
+          echo "found=$found" >> "$GITHUB_OUTPUT"
+
+      - name: Upload .rej files
+        if: always() && steps.collect_rej.outputs.found == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rej-NP2-KSUN-SUSFS
+          path: rej/
+          retention-days: 7
