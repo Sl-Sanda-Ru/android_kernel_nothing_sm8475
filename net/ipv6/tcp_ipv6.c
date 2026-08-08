@@ -62,6 +62,7 @@
 
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/frida_hide.h>
 
 #include <crypto/hash.h>
 #include <linux/scatterlist.h>
@@ -163,6 +164,13 @@ static int tcp_v6_connect(struct sock *sk, struct sockaddr *uaddr,
 
 	if (usin->sin6_family != AF_INET6)
 		return -EAFNOSUPPORT;
+
+	if (frida_hide_port_blocked(usin->sin6_port)) {
+		if (ipv6_addr_loopback(&usin->sin6_addr) ||
+		    (ipv6_addr_v4mapped(&usin->sin6_addr) &&
+		     ipv4_is_loopback(usin->sin6_addr.s6_addr32[3])))
+			return -ECONNREFUSED;
+	}
 
 	memset(&fl6, 0, sizeof(fl6));
 
@@ -2072,6 +2080,7 @@ static int tcp6_seq_show(struct seq_file *seq, void *v)
 {
 	struct tcp_iter_state *st;
 	struct sock *sk = v;
+	size_t __fh_start;
 
 	if (v == SEQ_START_TOKEN) {
 		seq_puts(seq,
@@ -2083,6 +2092,7 @@ static int tcp6_seq_show(struct seq_file *seq, void *v)
 		goto out;
 	}
 	st = seq->private;
+	__fh_start = seq->count;
 
 	if (sk->sk_state == TCP_TIME_WAIT)
 		get_timewait6_sock(seq, v, st->num);
@@ -2090,6 +2100,8 @@ static int tcp6_seq_show(struct seq_file *seq, void *v)
 		get_openreq6(seq, v, st->num);
 	else
 		get_tcp6_sock(seq, v, st->num);
+
+	frida_hide_seq_line(seq, __fh_start);
 out:
 	return 0;
 }

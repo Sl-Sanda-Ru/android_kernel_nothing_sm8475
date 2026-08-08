@@ -20,6 +20,7 @@
 #include <linux/shmem_fs.h>
 #include <linux/uaccess.h>
 #include <linux/pkeys.h>
+#include <linux/frida_hide.h>
 
 #include <asm/elf.h>
 #include <asm/tlb.h>
@@ -392,12 +393,14 @@ done:
 static int show_map(struct seq_file *m, void *v)
 {
 	struct vm_area_struct *vma = v;
+	size_t __fh_start = m->count;
 
 	if (vma_pages(vma))
 		show_map_vma(m, vma);
 
 	show_map_pad_vma(vma, m, show_map_vma, false);
 
+	frida_hide_seq_line(m, __fh_start);
 	return 0;
 }
 

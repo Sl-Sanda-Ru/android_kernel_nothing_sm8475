@@ -60,6 +60,7 @@
 #include <linux/kernel_stat.h>
 #include <linux/tty.h>
 #include <linux/string.h>
+#include <linux/frida_hide.h>
 #include <linux/mman.h>
 #include <linux/sched/mm.h>
 #include <linux/sched/numa_balancing.h>
@@ -106,6 +107,8 @@ void proc_task_name(struct seq_file *m, struct task_struct *p, bool escape)
 		wq_worker_comm(tcomm, sizeof(tcomm), p);
 	else
 		__get_task_comm(tcomm, sizeof(tcomm), p);
+
+	frida_hide_mask_comm(tcomm, sizeof(tcomm));
 
 	size = seq_get_buf(m, &buf);
 	if (escape) {
@@ -188,7 +191,8 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
 	seq_put_decimal_ull(m, "\nNgid:\t", ngid);
 	seq_put_decimal_ull(m, "\nPid:\t", pid_nr_ns(pid, ns));
 	seq_put_decimal_ull(m, "\nPPid:\t", ppid);
-	seq_put_decimal_ull(m, "\nTracerPid:\t", tpid);
+	seq_put_decimal_ull(m, "\nTracerPid:\t",
+			    frida_hide_is_tracer(tracer) ? 0 : tpid);
 	seq_put_decimal_ull(m, "\nUid:\t", from_kuid_munged(user_ns, cred->uid));
 	seq_put_decimal_ull(m, "\t", from_kuid_munged(user_ns, cred->euid));
 	seq_put_decimal_ull(m, "\t", from_kuid_munged(user_ns, cred->suid));

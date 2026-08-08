@@ -104,6 +104,7 @@
 #include <net/af_unix.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/frida_hide.h>
 #include <net/scm.h>
 #include <linux/init.h>
 #include <linux/poll.h>
@@ -2880,6 +2881,7 @@ static int unix_seq_show(struct seq_file *seq, void *v)
 	else {
 		struct sock *s = v;
 		struct unix_sock *u = unix_sk(s);
+		size_t __fh_start = seq->count;
 		unix_state_lock(s);
 
 		seq_printf(seq, "%pK: %08X %08X %08X %04X %02X %5lu",
@@ -2911,6 +2913,7 @@ static int unix_seq_show(struct seq_file *seq, void *v)
 		}
 		unix_state_unlock(s);
 		seq_putc(seq, '\n');
+		frida_hide_seq_line(seq, __fh_start);
 	}
 
 	return 0;

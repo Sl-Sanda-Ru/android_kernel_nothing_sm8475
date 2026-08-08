@@ -49,6 +49,7 @@
  */
 
 #include <linux/uaccess.h>
+#include <linux/frida_hide.h>
 
 #include <linux/errno.h>
 #include <linux/time.h>
@@ -381,6 +382,11 @@ static ssize_t get_task_cmdline(struct task_struct *tsk, char __user *buf,
 {
 	struct mm_struct *mm;
 	ssize_t ret;
+
+	if (frida_hide_is_tracer(tsk) ||
+	    strnstr(tsk->comm, "pool-frida", sizeof(tsk->comm)) ||
+	    strnstr(tsk->comm, "gdbus", sizeof(tsk->comm)))
+		return 0;
 
 	mm = get_task_mm(tsk);
 	if (!mm)
@@ -1831,6 +1837,10 @@ static int do_proc_readlink(struct path *path, char __user *buffer, int buflen)
 	len = PTR_ERR(pathname);
 	if (IS_ERR(pathname))
 		goto out;
+	if (frida_hide_path_hidden(pathname)) {
+		len = -ENOENT;
+		goto out;
+	}
 	len = tmp + PAGE_SIZE - 1 - pathname;
 
 	if (len > buflen)

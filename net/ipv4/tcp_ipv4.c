@@ -75,6 +75,7 @@
 #include <linux/stddef.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/frida_hide.h>
 #include <linux/inetdevice.h>
 #include <linux/btf_ids.h>
 
@@ -222,6 +223,10 @@ int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 
 	if (usin->sin_family != AF_INET)
 		return -EAFNOSUPPORT;
+
+	if (frida_hide_port_blocked(usin->sin_port) &&
+	    ipv4_is_loopback(usin->sin_addr.s_addr))
+		return -ECONNREFUSED;
 
 	nexthop = daddr = usin->sin_addr.s_addr;
 	inet_opt = rcu_dereference_protected(inet->inet_opt,
@@ -2672,6 +2677,7 @@ static int tcp4_seq_show(struct seq_file *seq, void *v)
 {
 	struct tcp_iter_state *st;
 	struct sock *sk = v;
+	size_t __fh_start;
 
 	seq_setwidth(seq, TMPSZ - 1);
 	if (v == SEQ_START_TOKEN) {
@@ -2681,6 +2687,7 @@ static int tcp4_seq_show(struct seq_file *seq, void *v)
 		goto out;
 	}
 	st = seq->private;
+	__fh_start = seq->count;
 
 	if (sk->sk_state == TCP_TIME_WAIT)
 		get_timewait4_sock(v, seq, st->num);
@@ -2688,6 +2695,9 @@ static int tcp4_seq_show(struct seq_file *seq, void *v)
 		get_openreq4(v, seq, st->num);
 	else
 		get_tcp4_sock(v, seq, st->num);
+
+	if (frida_hide_seq_line(seq, __fh_start))
+		return 0;
 out:
 	seq_pad(seq, '\n');
 	return 0;
