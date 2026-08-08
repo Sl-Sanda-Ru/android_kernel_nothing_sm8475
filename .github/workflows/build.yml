@@ -226,6 +226,11 @@ jobs:
           DTBO="${KERNEL_DIR}/out/arch/arm64/boot/dtbo.img"
           [ -f "$DTBO" ] && cp "$DTBO" "$ANYKERNEL_DIR/dtbo.img" || true
 
+          # Overlay our custom anykernel.sh (device-specific properties)
+          if [ -f "${KERNEL_DIR}/anykernel.sh" ]; then
+            cp "${KERNEL_DIR}/anykernel.sh" "$ANYKERNEL_DIR/anykernel.sh"
+          fi
+
           cd "$ANYKERNEL_DIR"
           zip -r9 "../kernel-NP2-KSUN-SUSFS.zip" . -x "*.git*" "README.md"
 
