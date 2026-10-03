@@ -908,6 +908,7 @@ static int show_smap(struct seq_file *m, void *v)
 {
 	struct vm_area_struct *vma = v;
 	struct mem_size_stats mss;
+	size_t __fh_start = m->count;
 
 	memset(&mss, 0, sizeof(mss));
 
@@ -940,6 +941,10 @@ static int show_smap(struct seq_file *m, void *v)
 show_pad:
 	show_map_pad_vma(vma, m, show_smap, true);
 
+	/* Drop the whole smaps block if the mapping path/name is a hidden
+	 * artifact (frida-agent, gadget, memfd:frida, hook frameworks).
+	 * Talsec/freeRASP reads /proc/self/smaps, not just /maps. */
+	frida_hide_seq_line(m, __fh_start);
 	return 0;
 }
 
@@ -1983,9 +1988,12 @@ static int show_numa_map(struct seq_file *m, void *v)
 	struct mempolicy *pol;
 	char buffer[64];
 	int nid;
+	size_t __fh_start;
 
 	if (!mm)
 		return 0;
+
+	__fh_start = m->count;
 
 	/* Ensure we start with an empty set of numa_maps statistics. */
 	memset(md, 0, sizeof(*md));
@@ -2046,6 +2054,8 @@ static int show_numa_map(struct seq_file *m, void *v)
 	seq_printf(m, " kernelpagesize_kB=%lu", vma_kernel_pagesize(vma) >> 10);
 out:
 	seq_putc(m, '\n');
+	/* Hide frida/hook artifact mappings from /proc/*/numa_maps too. */
+	frida_hide_seq_line(m, __fh_start);
 	return 0;
 }
 

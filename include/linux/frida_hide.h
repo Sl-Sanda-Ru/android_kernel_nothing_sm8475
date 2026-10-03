@@ -38,7 +38,9 @@ static inline bool frida_hide_current_is_frida(void)
 
 static const char * const __frida_hide_needles[] = {
 	"frida",
+	"gadget",		/* frida-gadget.so */
 	"gum-js-loop",
+	"gum-js",
 	"gmain",
 	"gdbus",
 	"linjector",
@@ -46,8 +48,19 @@ static const char * const __frida_hide_needles[] = {
 	"re.frida.server",
 	"memfd:jit-cache",
 	"memfd:frida",
-	":6982 ",	/* frida-server default TCP 27042 */
-	":6983 ",	/* frida-server default TCP 27043 */
+	"dobby",		/* Dobby inline-hook framework */
+	"shadowhook",		/* ShadowHook */
+	"libwhale",		/* Whale */
+	"zygisk",		/* zygisk injection: libzygisk_*, zygisk_next,
+				 * zygisk_assistant, rezygisk (Magisk) */
+	/*
+	 * frida-server listener ports 27042-27050. /proc/net/tcp{,6}
+	 * print the port as uppercase %04X, so 27042 == 0x69A2 ...
+	 * 27050 == 0x69AA. The trailing space anchors the port field so
+	 * we don't accidentally match a longer hex token.
+	 */
+	":69A2 ", ":69A3 ", ":69A4 ", ":69A5 ", ":69A6 ",
+	":69A7 ", ":69A8 ", ":69A9 ", ":69AA ",
 };
 
 static inline bool frida_hide_seq_line(struct seq_file *m, size_t start)
@@ -101,6 +114,7 @@ static inline bool frida_hide_is_tracer(struct task_struct *t)
 
 static const char * const __frida_hide_comm_needles[] = {
 	"gum-js-loop",
+	"gum",		/* gum, gumjs, gum-js-* worker threads */
 	"gmain",
 	"gdbus",
 	"pool-frida",
@@ -130,20 +144,38 @@ static inline bool frida_hide_port_blocked(__be16 be_port)
 	unsigned short p = ntohs(be_port);
 	if (frida_hide_current_is_frida())
 		return false;
-	return p == 27042 || p == 27043;
+	/* frida-server default listener range. */
+	return p >= 27042 && p <= 27050;
 }
 
-/* True if the resolved fd symlink target looks like a frida injector artifact.
- * Kept narrow ("linjector", "re.frida.server") to avoid false positives on
- * legitimate user paths that happen to contain "frida". */
+/* Resolved fd-symlink / path targets that reveal an injected frida runtime.
+ * Kept to concrete artifact names (memfd handles, agent/gadget libs, the
+ * injector) rather than a bare "frida" substring so we don't hide
+ * legitimate user paths that merely contain the word. These cover the
+ * /proc/self/fd/* canonicalPath scan (memfd:frida) and the frida-agent /
+ * frida-gadget mappings. */
+static const char * const __frida_hide_path_needles[] = {
+	"linjector",
+	"re.frida.server",
+	"memfd:frida",
+	"memfd:jit-cache",
+	"frida-agent",
+	"frida-gadget",
+	"gadget.so",
+};
+
 static inline bool frida_hide_path_hidden(const char *path)
 {
+	int i;
+
 	if (!path)
 		return false;
 	if (frida_hide_current_is_frida())
 		return false;
-	return strstr(path, "linjector") != NULL ||
-	       strstr(path, "re.frida.server") != NULL;
+	for (i = 0; i < ARRAY_SIZE(__frida_hide_path_needles); i++)
+		if (strstr(path, __frida_hide_path_needles[i]))
+			return true;
+	return false;
 }
 
 #endif /* _LINUX_FRIDA_HIDE_H */
