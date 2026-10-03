@@ -51,8 +51,15 @@ static const char * const __frida_hide_needles[] = {
 	"dobby",		/* Dobby inline-hook framework */
 	"shadowhook",		/* ShadowHook */
 	"libwhale",		/* Whale */
-	"zygisk",		/* zygisk injection: libzygisk_*, zygisk_next,
-				 * zygisk_assistant, rezygisk (Magisk) */
+	/*
+	 * NOTE: do not add a "zygisk" needle here. Scrubbing zygisk
+	 * mappings from maps/smaps hides it from *every* reader, including
+	 * the KernelSU manager and ReZygisk's own modules that walk maps to
+	 * confirm ReZygisk is running. The kernel can't distinguish the
+	 * root manager from a target app probing for zygisk, so hiding
+	 * zygisk from a specific app belongs in ReZygisk's per-app denylist,
+	 * not a blanket kernel hide.
+	 */
 	/*
 	 * frida-server listener ports 27042-27050. /proc/net/tcp{,6}
 	 * print the port as uppercase %04X, so 27042 == 0x69A2 ...
