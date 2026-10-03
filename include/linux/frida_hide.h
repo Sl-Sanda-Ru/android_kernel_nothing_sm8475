@@ -152,7 +152,7 @@ static inline bool frida_hide_port_blocked(__be16 be_port)
  * Kept to concrete artifact names (memfd handles, agent/gadget libs, the
  * injector) rather than a bare "frida" substring so we don't hide
  * legitimate user paths that merely contain the word. These cover the
- * /proc/self/fd/* canonicalPath scan (memfd:frida) and the frida-agent /
+ * /proc/self/fd canonicalPath scan (memfd:frida) and the frida-agent,
  * frida-gadget mappings. */
 static const char * const __frida_hide_path_needles[] = {
 	"linjector",

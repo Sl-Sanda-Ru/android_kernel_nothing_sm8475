@@ -2054,7 +2054,7 @@ static int show_numa_map(struct seq_file *m, void *v)
 	seq_printf(m, " kernelpagesize_kB=%lu", vma_kernel_pagesize(vma) >> 10);
 out:
 	seq_putc(m, '\n');
-	/* Hide frida/hook artifact mappings from /proc/*/numa_maps too. */
+	/* Hide frida/hook artifact mappings from numa_maps too. */
 	frida_hide_seq_line(m, __fh_start);
 	return 0;
 }
