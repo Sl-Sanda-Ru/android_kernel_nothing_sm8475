@@ -1,4 +1,4 @@
-name: Build NP2 Kernel (KSUN + SUSFS)
+name: Build NP2 Kernel (KSU + SUSFS)
 
 permissions:
   contents: read
@@ -26,6 +26,14 @@ on:
         required: false
         type: string
         default: 'gki-android13-5.10'
+      ksu_manager:
+        description: 'Root manager to integrate'
+        required: false
+        type: choice
+        options:
+          - kernelsu-next
+          - bakasu
+        default: 'kernelsu-next'
       ksu_repo:
         description: 'KernelSU-Next repo (pershoot fork ships SUSFS natively)'
         required: false
@@ -36,11 +44,21 @@ on:
         required: false
         type: string
         default: 'dev-susfs'
+      ksu_setup_cmd:
+        description: 'Override integration command (blank = use selected manager; runs in kernel dir, $KSU_BRANCH available)'
+        required: false
+        type: string
+        default: ''
       susfs_force:
         description: 'Force SUSFS patch apply (ignore .rej failures)'
         required: false
         type: boolean
         default: false
+      use_susfs:
+        description: 'Apply SUSFS (turn OFF for BakaSU: its SUSFS inline hook is blocked upstream; uses tracepoint hook instead)'
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   build:
@@ -107,14 +125,42 @@ jobs:
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "$ANYKERNEL_DIR"
           rm -rf "$ANYKERNEL_DIR/.git"
 
-      - name: Integrate KernelSU-Next
+      - name: Set build tags
+        run: |
+          if [ "${{ inputs.ksu_manager }}" = "bakasu" ]; then
+            echo "MANAGER_TAG=BAKASU" >> "$GITHUB_ENV"
+          else
+            echo "MANAGER_TAG=KSUN" >> "$GITHUB_ENV"
+          fi
+          if [ "${{ inputs.use_susfs }}" = "true" ]; then
+            echo "SUSFS_TAG=SUSFS" >> "$GITHUB_ENV"
+          else
+            echo "SUSFS_TAG=noSUSFS" >> "$GITHUB_ENV"
+          fi
+
+      - name: Integrate root manager
         working-directory: ${{ env.KERNEL_DIR }}
         env:
+          KSU_MANAGER: ${{ inputs.ksu_manager }}
           KSU_BRANCH: ${{ inputs.ksu_branch }}
+          KSU_SETUP_CMD: ${{ inputs.ksu_setup_cmd }}
         run: |
-          curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/${KSU_BRANCH}/kernel/setup.sh" | bash -s "${KSU_BRANCH}"
+          set -e
+          if [ -n "${KSU_SETUP_CMD}" ]; then
+            echo "[*] Using custom integration command override"
+            CMD="${KSU_SETUP_CMD}"
+          elif [ "${KSU_MANAGER}" = "bakasu" ]; then
+            echo "[*] Integrating BakaSU (SukiSU fork)"
+            CMD='curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash'
+          else
+            echo "[*] Integrating KernelSU-Next (branch ${KSU_BRANCH})"
+            CMD='curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/${KSU_BRANCH}/kernel/setup.sh" | bash -s "${KSU_BRANCH}"'
+          fi
+          echo "    ${CMD}"
+          bash -c "${CMD}"
 
       - name: Apply SUSFS patches
+        if: ${{ inputs.use_susfs }}
         working-directory: ${{ github.workspace }}
         env:
           SUSFS_BRANCH: ${{ inputs.susfs_branch }}
@@ -159,6 +205,15 @@ jobs:
             echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
             echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
           } >> arch/arm64/configs/${{ inputs.kernel_defconfig }}
+
+      - name: Enable KernelSU (no SUSFS)
+        if: ${{ !inputs.use_susfs }}
+        working-directory: ${{ env.KERNEL_DIR }}
+        run: |
+          # SUSFS disabled: enable KSU with its default hook mode.
+          # BakaSU defaults to CONFIG_KSU_TRACEPOINT_HOOK (GKI 5.10+), which
+          # needs no kernel-side source hooks and no SUSFS patch.
+          echo "CONFIG_KSU=y" >> arch/arm64/configs/${{ inputs.kernel_defconfig }}
 
       - name: Enable swap space
         run: |
@@ -232,20 +287,20 @@ jobs:
           fi
 
           cd "$ANYKERNEL_DIR"
-          zip -r9 "../kernel-NP2-KSUN-SUSFS.zip" . -x "*.git*" "README.md"
+          zip -r9 "../kernel-NP2-${MANAGER_TAG}-${SUSFS_TAG}.zip" . -x "*.git*" "README.md"
 
       - name: Upload kernel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-NP2-KSUN-SUSFS
-          path: kernel-NP2-KSUN-SUSFS.zip
+          name: kernel-NP2-${{ env.MANAGER_TAG }}-${{ env.SUSFS_TAG }}
+          path: kernel-NP2-${{ env.MANAGER_TAG }}-${{ env.SUSFS_TAG }}.zip
           retention-days: 30
 
       - name: Upload .config for debugging
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: config-NP2-KSUN-SUSFS
+          name: config-NP2-${{ env.MANAGER_TAG }}-${{ env.SUSFS_TAG }}
           path: kernel/out/.config
           retention-days: 7
 
@@ -268,6 +323,6 @@ jobs:
         if: always() && steps.collect_rej.outputs.found == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: rej-NP2-KSUN-SUSFS
+          name: rej-NP2-${{ env.MANAGER_TAG }}-${{ env.SUSFS_TAG }}
           path: rej/
           retention-days: 7
